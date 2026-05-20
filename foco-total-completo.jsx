@@ -145,146 +145,193 @@ const CONQ=[
 
 async function ai(msgs, sys="") {
   try {
-    const apiKey = localStorage.getItem("focototal_apikey") || "";
     const backendUrl = localStorage.getItem("focototal_backend") || "";
-    // Se backend configurado, usa ele (chave fica segura no servidor)
+    const anthropicKey = localStorage.getItem("focototal_apikey") || "";
+    const geminiKey = localStorage.getItem("focototal_geminikey") || "";
+
+    // Opção 1: backend próprio (mais seguro)
     if (backendUrl) {
       const r = await fetch(backendUrl + "/api/chat", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ system: sys||"Você é tutor de concursos brasileiro. Responda em português, de forma clara e motivadora.", messages: msgs }),
+        body:JSON.stringify({ system: sys||"Você é tutor de concursos brasileiro. Responda em português.", messages: msgs }),
       });
       if (!r.ok) return "Erro no backend: " + r.status;
       const d = await r.json();
       return d.text || "Erro.";
     }
-    // Senão, chama Anthropic diretamente com a chave do usuário
-    if (!apiKey) return "⚠️ Configure sua chave de API nas Configurações para usar a IA.";
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method:"POST",
-      headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:700,
-        system: sys||"Você é tutor de concursos brasileiro. Responda em português, de forma clara e motivadora.",
-        messages: msgs }),
-    });
-    const d = await r.json();
-    if (d.error) return "Erro da API: " + d.error.message;
-    return d.content?.[0]?.text || "Erro.";
+
+    // Opção 2: Gemini (gratuito)
+    if (geminiKey) {
+      const model = "gemini-2.0-flash";
+      const url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + geminiKey;
+      // Monta histórico no formato Gemini
+      const geminiMsgs = msgs.map(m => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }]
+      }));
+      // Injeta system prompt como primeira mensagem user se existir
+      const systemInstruction = sys ? { parts: [{ text: sys }] } : undefined;
+      const body = {
+        contents: geminiMsgs,
+        ...(systemInstruction && { systemInstruction }),
+        generationConfig: { maxOutputTokens: 700, temperature: 0.7 }
+      };
+      const r = await fetch(url, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify(body)
+      });
+      const d = await r.json();
+      if (d.error) return "Erro Gemini: " + d.error.message;
+      return d.candidates?.[0]?.content?.parts?.[0]?.text || "Sem resposta.";
+    }
+
+    // Opção 3: Anthropic direto (chave no browser)
+    if (anthropicKey) {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":anthropicKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:700,
+          system: sys||"Você é tutor de concursos brasileiro. Responda em português.",
+          messages: msgs }),
+      });
+      const d = await r.json();
+      if (d.error) return "Erro Anthropic: " + d.error.message;
+      return d.content?.[0]?.text || "Erro.";
+    }
+
+    return "⚠️ Configure uma chave de API nas Configurações para usar a IA.";
   } catch(e) { return "Erro de conexão: " + e.message; }
 }
 function ConfigAPI() {
-  const [apiKey, setApiKey] = useState(localStorage.getItem("focototal_apikey")||"");
+  const [geminiKey, setGeminiKey] = useState(localStorage.getItem("focototal_geminikey")||"");
+  const [anthropicKey, setAnthropicKey] = useState(localStorage.getItem("focototal_apikey")||"");
   const [backend, setBackend] = useState(localStorage.getItem("focototal_backend")||"");
   const [testMsg, setTestMsg] = useState("");
   const [testing, setTesting] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [showKey, setShowKey] = useState(false);
+  const [showGemini, setShowGemini] = useState(false);
+  const [showAnthropic, setShowAnthropic] = useState(false);
+
+  const temGemini = !!localStorage.getItem("focototal_geminikey");
+  const temAnthropic = !!localStorage.getItem("focototal_apikey");
+  const temBackend = !!localStorage.getItem("focototal_backend");
+  const temAlguma = temGemini || temAnthropic || temBackend;
+
+  // Qual provedor está ativo
+  const provedorAtivo = temBackend ? "Backend" : temGemini ? "Gemini (gratuito)" : temAnthropic ? "Anthropic" : "Nenhum";
+  const provedorCor = temBackend ? C.blue : temGemini ? C.green : temAnthropic ? C.purple : C.red;
 
   function salvar() {
-    if (apiKey.trim()) localStorage.setItem("focototal_apikey", apiKey.trim());
+    if (geminiKey.trim()) localStorage.setItem("focototal_geminikey", geminiKey.trim());
+    else localStorage.removeItem("focototal_geminikey");
+    if (anthropicKey.trim()) localStorage.setItem("focototal_apikey", anthropicKey.trim());
     else localStorage.removeItem("focototal_apikey");
     if (backend.trim()) localStorage.setItem("focototal_backend", backend.trim().replace(/\/$/,""));
     else localStorage.removeItem("focototal_backend");
-    setSaved(true);
-    setTimeout(()=>setSaved(false), 2500);
+    setSaved(true); setTimeout(()=>setSaved(false), 2500);
   }
 
   async function testar() {
     setTesting(true); setTestMsg("");
-    const key = apiKey.trim();
+    const gKey = geminiKey.trim();
+    const aKey = anthropicKey.trim();
     const bk = backend.trim();
     try {
       if (bk) {
         const r = await fetch(bk+"/api/health");
-        if (r.ok) setTestMsg("✅ Backend conectado com sucesso!");
-        else setTestMsg("❌ Backend retornou erro "+r.status);
-      } else if (key) {
-        const r = await fetch("https://api.anthropic.com/v1/messages",{
-          method:"POST",
-          headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-          body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:30,messages:[{role:"user",content:"Responda só: OK"}]}),
-        });
+        setTestMsg(r.ok ? "✅ Backend conectado!" : "❌ Backend erro "+r.status);
+      } else if (gKey) {
+        const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key="+gKey;
+        const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{role:"user",parts:[{text:"Responda só: OK"}]}],generationConfig:{maxOutputTokens:10}})});
         const d = await r.json();
-        if (d.content?.[0]?.text) setTestMsg("✅ Chave válida! Resposta: "+d.content[0].text);
-        else if (d.error) setTestMsg("❌ Erro: "+d.error.message);
-        else setTestMsg("❌ Resposta inesperada da API.");
+        if (d.candidates?.[0]?.content?.parts?.[0]?.text) setTestMsg("✅ Gemini OK! Resposta: " + d.candidates[0].content.parts[0].text.trim());
+        else if (d.error) setTestMsg("❌ Erro Gemini: " + d.error.message);
+        else setTestMsg("❌ Resposta inesperada.");
+      } else if (aKey) {
+        const r = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":aKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:20,messages:[{role:"user",content:"Responda só: OK"}]})});
+        const d = await r.json();
+        if (d.content?.[0]?.text) setTestMsg("✅ Anthropic OK! Resposta: " + d.content[0].text);
+        else if (d.error) setTestMsg("❌ Erro: " + d.error.message);
       } else {
-        setTestMsg("⚠️ Insira uma chave ou URL de backend antes de testar.");
+        setTestMsg("⚠️ Insira uma chave antes de testar.");
       }
-    } catch(e) { setTestMsg("❌ Erro de conexão: "+e.message); }
+    } catch(e) { setTestMsg("❌ Erro: " + e.message); }
     setTesting(false);
   }
-
-  const temChave = !!localStorage.getItem("focototal_apikey");
-  const temBackend = !!localStorage.getItem("focototal_backend");
 
   return (
     <div>
       <div style={{fontSize:17,fontWeight:500,color:C.txt1,marginBottom:4}}>Chave API & Backend</div>
-      <div style={{fontSize:13,color:C.txt2,marginBottom:18,lineHeight:1.6}}>Configure sua chave da Anthropic para ativar todas as funcionalidades de IA do app.</div>
+      <div style={{fontSize:13,color:C.txt2,marginBottom:16,lineHeight:1.6}}>Configure sua IA. O app tenta nesta ordem: Backend → Gemini → Anthropic.</div>
 
       {/* Status atual */}
-      <div style={s.g2}>
-        <div style={{...s.met,border:`0.5px solid ${temChave?C.green+"40":C.red+"40"}`,background:temChave?C.greenDim:C.redDim}}>
-          <div style={{fontSize:10,color:C.txt2,marginBottom:3}}>Chave direta</div>
-          <div style={{fontSize:13,fontWeight:500,color:temChave?C.green:C.red}}>{temChave?"Configurada":"Não configurada"}</div>
-        </div>
-        <div style={{...s.met,border:`0.5px solid ${temBackend?C.green+"40":C.border}`,background:temBackend?C.greenDim:"transparent"}}>
-          <div style={{fontSize:10,color:C.txt2,marginBottom:3}}>Backend</div>
-          <div style={{fontSize:13,fontWeight:500,color:temBackend?C.green:C.txt3}}>{temBackend?"Conectado":"Não configurado"}</div>
-        </div>
-      </div>
-
-      {/* Opção 1: Chave direta */}
-      <div style={s.card({marginBottom:12})}>
-        <div style={{...s.row,marginBottom:10}}>
-          <div style={s.ib(C.acc,C.accDim2,28)}><Ic n="key" sz={13} color={C.acc}/></div>
+      <div style={{...s.c2({background:temAlguma?C.greenDim:C.redDim,border:`0.5px solid ${temAlguma?C.green:C.red}30`,marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between"})}}>
+        <div style={s.row}>
+          <Ic n={temAlguma?"check":"alert"} sz={15} color={temAlguma?C.green:C.red}/>
           <div>
-            <div style={{fontSize:13,fontWeight:500,color:C.txt1}}>Opção 1 — Chave direta</div>
-            <div style={{fontSize:11,color:C.txt3}}>Mais simples. Chave salva só no seu dispositivo.</div>
-          </div>
-        </div>
-        <div style={{fontSize:10,color:C.txt3,marginBottom:5}}>Chave API da Anthropic (começa com sk-ant-...)</div>
-        <div style={{...s.row,marginBottom:8}}>
-          <input
-            type={showKey?"text":"password"}
-            value={apiKey}
-            onChange={e=>setApiKey(e.target.value)}
-            placeholder="sk-ant-api03-..."
-            style={{...s.inp,flex:1,fontFamily:"monospace",fontSize:12}}
-          />
-          <button onClick={()=>setShowKey(!showKey)} style={{...s.btn("ghost"),padding:"8px 10px",fontSize:11}}>{showKey?"Ocultar":"Ver"}</button>
-        </div>
-        <div style={{...s.c2({background:C.amberDim,border:`0.5px solid ${C.amber}30`,marginBottom:0})}}>
-          <div style={{...s.row}}>
-            <Ic n="alert" sz={13} color={C.amber} style={{flexShrink:0}}/>
-            <div style={{fontSize:11,color:C.txt2,lineHeight:1.5}}>A chave fica salva <strong>só neste dispositivo</strong> (localStorage). Nunca a compartilhe. Para produção com múltiplos usuários, use o backend.</div>
+            <div style={{fontSize:12,fontWeight:500,color:temAlguma?C.green:C.red}}>{temAlguma?"IA configurada":"IA não configurada"}</div>
+            <div style={{fontSize:10,color:C.txt3}}>Provedor ativo: <span style={{color:provedorCor,fontWeight:500}}>{provedorAtivo}</span></div>
           </div>
         </div>
       </div>
 
-      {/* Opção 2: Backend */}
-      <div style={s.card({marginBottom:12})}>
+      {/* Gemini - RECOMENDADO */}
+      <div style={s.card({marginBottom:10,border:`0.5px solid ${temGemini?C.green+"40":C.border}`})}>
+        <div style={{...s.row,marginBottom:10}}>
+          <div style={s.ib(C.green,C.greenDim,28)}><Ic n="sparkles" sz={13} color={C.green}/></div>
+          <div style={{flex:1}}>
+            <div style={{...s.row}}>
+              <div style={{fontSize:13,fontWeight:500,color:C.txt1}}>Google Gemini</div>
+              <span style={s.bdg(C.green,C.greenDim)}>Gratuito ✦ Recomendado</span>
+            </div>
+            <div style={{fontSize:11,color:C.txt3}}>1 milhão de tokens/dia grátis · Qualidade excelente</div>
+          </div>
+        </div>
+        <div style={{fontSize:10,color:C.txt3,marginBottom:5}}>Chave API (começa com AIza...)</div>
+        <div style={{...s.row,marginBottom:8}}>
+          <input type={showGemini?"text":"password"} value={geminiKey} onChange={e=>setGeminiKey(e.target.value)}
+            placeholder="AIzaSy..." style={{...s.inp,flex:1,fontFamily:"monospace",fontSize:12}}/>
+          <button onClick={()=>setShowGemini(!showGemini)} style={{...s.btn("ghost"),padding:"8px 10px",fontSize:11}}>{showGemini?"Ocultar":"Ver"}</button>
+        </div>
+        <div style={{...s.c2({background:C.greenDim,border:`0.5px solid ${C.green}25`,marginBottom:0})}}>
+          <div style={s.row}>
+            <Ic n="bulb" sz={12} color={C.green} style={{flexShrink:0}}/>
+            <div style={{fontSize:11,color:C.txt2}}>Pegue sua chave grátis em <strong style={{color:C.green}}>aistudio.google.com</strong> → Get API Key</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Anthropic */}
+      <div style={s.card({marginBottom:10,border:`0.5px solid ${temAnthropic?C.purple+"40":C.border}`})}>
+        <div style={{...s.row,marginBottom:10}}>
+          <div style={s.ib(C.purple,C.purpleDim,28)}><Ic n="bolt" sz={13} color={C.purple}/></div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:500,color:C.txt1}}>Anthropic Claude</div>
+            <div style={{fontSize:11,color:C.txt3}}>$5 crédito grátis no cadastro · Maior qualidade</div>
+          </div>
+        </div>
+        <div style={{fontSize:10,color:C.txt3,marginBottom:5}}>Chave API (começa com sk-ant-...)</div>
+        <div style={{...s.row,marginBottom:0}}>
+          <input type={showAnthropic?"text":"password"} value={anthropicKey} onChange={e=>setAnthropicKey(e.target.value)}
+            placeholder="sk-ant-api03-..." style={{...s.inp,flex:1,fontFamily:"monospace",fontSize:12}}/>
+          <button onClick={()=>setShowAnthropic(!showAnthropic)} style={{...s.btn("ghost"),padding:"8px 10px",fontSize:11}}>{showAnthropic?"Ocultar":"Ver"}</button>
+        </div>
+      </div>
+
+      {/* Backend */}
+      <div style={s.card({marginBottom:12,border:`0.5px solid ${temBackend?C.blue+"40":C.border}`})}>
         <div style={{...s.row,marginBottom:10}}>
           <div style={s.ib(C.blue,C.blueDim,28)}><Ic n="server" sz={13} color={C.blue}/></div>
           <div>
-            <div style={{fontSize:13,fontWeight:500,color:C.txt1}}>Opção 2 — Backend próprio</div>
-            <div style={{fontSize:11,color:C.txt3}}>Mais seguro. Chave fica no servidor, não exposta.</div>
+            <div style={{fontSize:13,fontWeight:500,color:C.txt1}}>Backend próprio</div>
+            <div style={{fontSize:11,color:C.txt3}}>Para produção — chave fica segura no servidor</div>
           </div>
         </div>
-        <div style={{fontSize:10,color:C.txt3,marginBottom:5}}>URL do seu backend (ex: https://meuapp.onrender.com)</div>
-        <input
-          value={backend}
-          onChange={e=>setBackend(e.target.value)}
+        <input value={backend} onChange={e=>setBackend(e.target.value)}
           placeholder="https://seu-backend.onrender.com"
-          style={{...s.inp,marginBottom:8,fontFamily:"monospace",fontSize:12}}
-        />
-        <div style={{...s.c2({background:C.greenDim,border:`0.5px solid ${C.green}30`,marginBottom:0})}}>
-          <div style={s.row}>
-            <Ic n="check" sz={13} color={C.green} style={{flexShrink:0}}/>
-            <div style={{fontSize:11,color:C.txt2,lineHeight:1.5}}>Quando o backend está configurado, ele tem <strong>prioridade</strong> sobre a chave direta. A chave da API fica segura no servidor.</div>
-          </div>
-        </div>
+          style={{...s.inp,fontFamily:"monospace",fontSize:12}}/>
       </div>
 
       {/* Botões */}
@@ -293,156 +340,17 @@ function ConfigAPI() {
           {testing?"Testando...":"Testar conexão"}
         </button>
         <button onClick={salvar} style={{...s.btn(),flex:2}}>
-          <span style={s.row}><Ic n="check" sz={13} color="#0A0A0A"/>{saved?"Salvo!":"Salvar configurações"}</span>
+          <span style={s.row}><Ic n="check" sz={13} color="#0A0A0A"/>{saved?"Salvo! ✓":"Salvar configurações"}</span>
         </button>
       </div>
 
-      {/* Resultado do teste */}
-      {testMsg && (
-        <div style={{...s.c2({background:testMsg.startsWith("✅")?C.greenDim:testMsg.startsWith("⚠️")?C.amberDim:C.redDim,border:`0.5px solid ${testMsg.startsWith("✅")?C.green:testMsg.startsWith("⚠️")?C.amber:C.red}30`})}}>
-          <div style={{fontSize:12,color:C.txt1,lineHeight:1.5}}>{testMsg}</div>
-        </div>
-      )}
-
-      {/* Instruções */}
-      <div style={{...s.card({background:C.bg2,marginTop:4})}}>
-        <div style={s.lbl}>Como obter sua chave gratuita</div>
-        {[
-          "Acesse console.anthropic.com",
-          "Crie uma conta (plano Free = $5 de crédito grátis)",
-          "Vá em API Keys → Create Key",
-          "Cole a chave no campo acima e salve",
-        ].map((step,i)=>(
-          <div key={i} style={{...s.row,marginBottom:i<3?8:0}}>
-            <div style={{width:18,height:18,borderRadius:"50%",background:C.accDim2,border:`0.5px solid ${C.acc}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:500,color:C.acc,flexShrink:0}}>{i+1}</div>
-            <span style={{fontSize:12,color:C.txt2}}>{step}</span>
-          </div>
-        ))}
-      </div>
+      {testMsg&&<div style={{...s.c2({background:testMsg.startsWith("✅")?C.greenDim:testMsg.startsWith("⚠️")?C.amberDim:C.redDim,border:`0.5px solid ${testMsg.startsWith("✅")?C.green:testMsg.startsWith("⚠️")?C.amber:C.red}25`})}}>
+        <div style={{fontSize:12,color:C.txt1,lineHeight:1.5}}>{testMsg}</div>
+      </div>}
     </div>
   );
 }
 
-
-const NAV=[
-  {sec:"Geral",items:[{id:"home",n:"home",l:"Início"}]},
-  {sec:"Fase 1 — Base",items:[
-    {id:"metodos",n:"settings",l:"Métodos de estudo"},
-    {id:"edital",n:"file",l:"Edital & Matérias"},
-    {id:"diagnostico",n:"clip",l:"Diagnóstico"},
-    {id:"tutor",n:"chat",l:"Tutor IA"},
-    {id:"plano",n:"cal",l:"Plano dinâmico"},
-    {id:"flashcards",n:"cards",l:"Flashcards"},
-  ]},
-  {sec:"Fase 2 — Performance",items:[
-    {id:"simulado",n:"target",l:"Simulado adaptativo"},
-    {id:"erros",n:"brain",l:"Análise de erros"},
-    {id:"prova",n:"clock",l:"Modo prova"},
-  ]},
-  {sec:"Fase 3 — Retenção",items:[
-    {id:"streak",n:"flame",l:"Streak & Missões"},
-    {id:"grupo",n:"users",l:"Grupo & Ranking"},
-    {id:"saude",n:"heart",l:"Saúde do estudo"},
-  ]},
-  {sec:"Sistema",items:[
-    {id:"config",n:"key",l:"Chave API & Backend"},
-  ]},
-];
-
-function Sidebar({ page, setPage }) {
-  return (
-    <div style={s.sidebar}>
-      <div style={s.logo}>
-        <div style={s.logoBox}><Ic n="bolt" sz={14} color="#0A0A0A"/></div>
-        <span style={{fontSize:14,fontWeight:500,color:C.txt1}}>Foco Total</span>
-      </div>
-      {NAV.map(sec=>(
-        <div key={sec.sec}>
-          <div style={s.ns}>{sec.sec}</div>
-          {sec.items.map(it=>(
-            <div key={it.id} style={s.ni(page===it.id)} onClick={()=>setPage(it.id)}>
-              <Ic n={it.n} sz={14} color={page===it.id?C.acc:C.txt3}/>
-              <span style={s.nl(page===it.id)}>{it.l}</span>
-            </div>
-          ))}
-        </div>
-      ))}
-      <div style={{marginTop:"auto",padding:"0 6px",borderTop:`0.5px solid ${C.border}`,paddingTop:10}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px"}}>
-          <div style={{width:27,height:27,borderRadius:"50%",background:C.accDim2,border:`0.5px solid ${C.acc}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:500,color:C.acc}}>AN</div>
-          <div><div style={{fontSize:12,color:C.txt1,fontWeight:500}}>Ana</div><div style={{fontSize:10,color:C.txt3}}>ENEM 2025 · 47 dias</div></div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Home({ setPage, st }) {
-  const { materias, diagnostico, plano, flashcards, historico, streak } = st;
-  const ac=historico.filter(h=>h.acertou).length, tot=historico.length;
-  const pct=tot?Math.round((ac/tot)*100):0;
-  const fases=[
-    {titulo:"Fase 1 — Base",cor:C.acc,itens:[
-      {id:"metodos",l:"Métodos de estudo",ok:true},
-      {id:"edital",l:"Edital & Matérias",ok:materias.length>0},
-      {id:"diagnostico",l:"Diagnóstico",ok:!!diagnostico},
-      {id:"tutor",l:"Tutor IA",ok:true},
-      {id:"plano",l:"Plano dinâmico",ok:!!plano},
-      {id:"flashcards",l:"Flashcards",ok:flashcards.length>0},
-    ]},
-    {titulo:"Fase 2 — Performance",cor:C.blue,itens:[
-      {id:"simulado",l:"Simulado adaptativo",ok:historico.some(h=>h.origem==="simulado")},
-      {id:"erros",l:"Análise de erros",ok:historico.filter(h=>!h.acertou).length>=3},
-      {id:"prova",l:"Modo prova",ok:historico.some(h=>h.origem==="prova")},
-    ]},
-    {titulo:"Fase 3 — Retenção",cor:C.green,itens:[
-      {id:"streak",l:"Streak & Missões",ok:streak>=1},
-      {id:"grupo",l:"Grupo & Ranking",ok:true},
-      {id:"saude",l:"Saúde do estudo",ok:true},
-    ]},
-  ];
-  return (
-    <div>
-      <div style={{marginBottom:16}}>
-        <div style={{fontSize:20,fontWeight:500,color:C.txt1,marginBottom:3}}>Bem-vinda, Ana</div>
-        <div style={{fontSize:13,color:C.txt2}}>Todas as fases integradas — seu app completo de estudos</div>
-      </div>
-      <div style={s.g4}>
-        {[
-          {l:"Sequência",v:`${streak}d`,c:C.acc},
-          {l:"Questões",v:tot,c:C.blue},
-          {l:"Acertos",v:tot?`${pct}%`:"—",c:pct>=70?C.green:pct>=50?C.amber:tot?C.red:C.txt3},
-          {l:"Flashcards",v:flashcards.length||"—",c:C.purple},
-        ].map((m,i)=>(
-          <div key={i} style={s.met}>
-            <div style={{fontSize:10,color:C.txt2,marginBottom:3}}>{m.l}</div>
-            <div style={{fontSize:19,fontWeight:500,color:m.c}}>{m.v}</div>
-          </div>
-        ))}
-      </div>
-      <div style={s.g3}>
-        {fases.map((f,fi)=>{
-          const done=f.itens.filter(i=>i.ok).length;
-          return (
-            <div key={fi} style={s.card({padding:"12px 14px"})}>
-              <div style={{fontSize:11,fontWeight:500,color:f.cor,marginBottom:8}}>{f.titulo}</div>
-              {f.itens.map((it,i)=>(
-                <div key={i} onClick={()=>setPage(it.id)} style={{...s.row,marginBottom:5,cursor:"pointer"}}>
-                  <div style={{width:15,height:15,borderRadius:"50%",background:it.ok?f.cor+"18":"transparent",border:`0.5px solid ${it.ok?f.cor:C.border2}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    {it.ok&&<Ic n="check" sz={9} color={f.cor}/>}
-                  </div>
-                  <span style={{fontSize:11,color:it.ok?C.txt1:C.txt3}}>{it.l}</span>
-                </div>
-              ))}
-              <div style={s.pb}><div style={{height:"100%",borderRadius:999,background:f.cor,width:`${Math.round((done/f.itens.length)*100)}%`}}/></div>
-              <div style={{fontSize:9,color:C.txt3,marginTop:3}}>{done}/{f.itens.length} concluídos</div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 function MetodosEstudo({ metodos, setMetodos, concurso, setConcurso }) {
   const [detalhe, setDetalhe] = useState(null);
@@ -1747,7 +1655,7 @@ export default function App() {
             <span style={{fontSize:10,color:C.txt3}}>🔥 {streak}d · ⭐ {xp} XP</span>
             <button onClick={()=>{if(window.confirm("Apagar todos os dados salvos?")){Object.keys(localStorage).filter(k=>k.startsWith("focototal_")).forEach(k=>localStorage.removeItem(k));window.location.reload();}}} style={{background:"none",border:"none",cursor:"pointer",fontSize:10,color:C.txt3,padding:0}} title="Limpar dados">⟳</button>
             <span style={s.bdg(C.acc,C.accDim2)}>47 dias · {concurso}</span>
-            {!localStorage.getItem("focototal_apikey")&&!localStorage.getItem("focototal_backend")&&<span onClick={()=>setPage("config")} style={{...s.bdg(C.red,C.redDim),cursor:"pointer"}} title="Configurar chave da API">⚠️ Sem chave API</span>}
+            {!localStorage.getItem("focototal_apikey")&&!localStorage.getItem("focototal_backend")&&!localStorage.getItem("focototal_geminikey")&&<span onClick={()=>setPage("config")} style={{...s.bdg(C.red,C.redDim),cursor:"pointer"}} title="Configurar chave da API">⚠️ Sem chave API</span>}
           </div>
         </div>
         <div style={{...s.con,display:page==="tutor"?"flex":"block",flexDirection:"column"}}>
