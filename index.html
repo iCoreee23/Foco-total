@@ -2,8 +2,9 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="apple-mobile-web-app-title" content="Foco Total"/>
   <meta name="theme-color" content="#0A0A0A"/>
@@ -11,16 +12,22 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
   <style>
     *{margin:0;padding:0;box-sizing:border-box;}
-    html,body,#root{height:100%;background:#0A0A0A;}
-    body{font-family:'DM Sans',system-ui,sans-serif;overflow:hidden;}
+    html,body{height:100%;background:#0A0A0A;overflow:hidden;}
+    #root{height:100%;}
+    body{font-family:'DM Sans',system-ui,sans-serif;}
   </style>
 </head>
 <body>
   <div id="root"></div>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script type="text/babel" data-presets="react">
+
+  <!-- Load React UMD builds (no modules) -->
+  <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+
+  <!-- Babel standalone - transforms JSX to plain JS in browser -->
+  <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="react,env" data-plugins="transform-modules-umd">
 const { useState, useRef, useEffect } = React;
 
 const C = {
@@ -1795,9 +1802,10 @@ function App() {
 }
 
 
-    const container = document.getElementById('root');
-    const root = ReactDOM.createRoot(container);
-    root.render(React.createElement(App));
+    // Mount the app
+    const _container = document.getElementById('root');
+    const _root = ReactDOM.createRoot(_container);
+    _root.render(React.createElement(App));
   </script>
 </body>
 </html>
